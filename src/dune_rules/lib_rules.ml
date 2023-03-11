@@ -122,6 +122,43 @@ let build_lib
              ]))
 ;;
 
+(* Build an OCaml library. *)
+let build_js_lib
+  (lib : Library.t)
+  ~sctx
+  ~expander
+  ~flags
+  ~dir
+  ~cm_files
+  ~in_context
+  ~(ctarget : Js_of_ocaml.Target.t)
+  ~obj_dir
+  config
+  =
+  let linkall =
+    match lib.kind with
+    | Ppx_deriver _ | Ppx_rewriter _ -> Action_builder.return true
+    | Normal ->
+      let standard = Action_builder.return [] in
+      let open Action_builder.O in
+      let+ library_flags =
+        Expander.expand_and_eval_set expander lib.library_flags ~standard
+      and+ ocaml_flags = Ocaml_flags.get flags (Ocaml Byte) in
+      List.exists library_flags ~f:(String.equal "-linkall")
+      || List.exists ocaml_flags ~f:(String.equal "-linkall")
+  in
+  Jsoo_rules.build_cma_js
+    sctx
+    ~dir
+    ~config
+    ~in_context
+    ~ctarget
+    ~obj_dir
+    ~linkall
+    cm_files
+    (Dune_file.Library.archive_basename lib ~ext:(match ctarget with JS -> Js_of_ocaml.Ext.cma | Wasm -> Js_of_ocaml.Ext.wasm_cma))
+;;
+
 let gen_wrapped_compat_modules (lib : Library.t) cctx =
   let modules = Compilation_context.modules cctx in
   let wrapped_compat = Modules.wrapped_compat modules in
@@ -488,8 +525,10 @@ let setup_build_archives
       build_lib lib ~native_archives ~dir ~sctx ~expander ~flags ~mode ~cm_files)
   and* () =
     (* Build *.cma.js *)
-    Memo.when_ modes.ocaml.byte (fun () ->
-      let src = Library.archive lib ~dir ~ext:(Mode.compiled_lib_ext Mode.Byte) in
+    match `From_cmos with
+    | `From_cma ->
+      Memo.when_ modes.ocaml.byte (fun () ->
+        let src = Library.archive lib ~dir ~ext:(Mode.compiled_lib_ext Mode.Byte) in
       Jsoo_rules.iter_compilation_targets ~f:(fun ctarget ->
         let action_with_targets =
           List.map Jsoo_rules.Config.all ~f:(fun config ->
@@ -501,6 +540,25 @@ let setup_build_archives
               ~config:(Some config)
               ~src:(Path.build src)
               ~obj_dir)
+        in
+        Memo.parallel_iter action_with_targets ~f:(fun rule ->
+          Super_context.add_rule sctx ~dir ~loc:lib.buildable.loc rule)))
+    | `From_cmos ->
+      Memo.when_ modes.ocaml.byte (fun () ->
+      Jsoo_rules.iter_compilation_targets ~f:(fun ctarget ->
+        let action_with_targets =
+          List.map Jsoo_rules.Config.all ~f:(fun config ->
+            build_js_lib
+              (lib : Library.t)
+              ~sctx
+              ~expander
+              ~flags
+              ~dir
+              ~cm_files
+              ~in_context:js_of_ocaml
+              ~ctarget
+              ~obj_dir
+              (Some config))
         in
         Memo.parallel_iter action_with_targets ~f:(fun rule ->
           Super_context.add_rule sctx ~dir ~loc:lib.buildable.loc rule)))
