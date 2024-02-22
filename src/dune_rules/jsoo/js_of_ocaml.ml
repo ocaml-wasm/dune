@@ -9,7 +9,10 @@ module Ext = struct
   let wasm = ".bc.wasm"
   let cmo = ".cmo.js"
   let cma = ".cma.js"
+  let wasm_cmo = ".cmo.wasm"
+  let wasm_cma = ".cma.wasm"
   let runtime = ".bc.runtime.js"
+  let wasm_runtime = ".bc.runtime.wasm"
 end
 
 let field_oslu name = Ordered_set_lang.Unexpanded.field name

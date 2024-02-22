@@ -311,19 +311,21 @@ let build_module ?(force_write_cmi = false) ?(precompiled_cmi = false) cctx m =
       | Some src ->
         Compilation_context.js_of_ocaml cctx
         |> Memo.Option.iter ~f:(fun in_context ->
-          (* Build *.cmo.js *)
+          (* Build *.cmo.js / *.cmo.wat *)
           let sctx = Compilation_context.super_context cctx in
           let dir = Compilation_context.dir cctx in
-          let action_with_targets =
-            Jsoo_rules.build_cm
-              sctx
-              ~dir
-              ~in_context
-              ~src:(Path.build src)
-              ~obj_dir
-              ~config:None
-          in
-          Super_context.add_rule sctx ~dir action_with_targets))
+          Jsoo_rules.iter_compilation_targets ~f:(fun ctarget ->
+            let action_with_targets =
+              Jsoo_rules.build_cm
+                sctx
+                ~dir
+                ~in_context
+                ~ctarget
+                ~src:(Path.build src)
+                ~obj_dir
+                ~config:None
+            in
+            Super_context.add_rule sctx ~dir action_with_targets)))
   in
   Memo.when_ melange (fun () ->
     let* () = build_cm ~cm_kind:(Melange Cmj) ~phase:None in

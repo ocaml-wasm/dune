@@ -490,18 +490,20 @@ let setup_build_archives
     (* Build *.cma.js *)
     Memo.when_ modes.ocaml.byte (fun () ->
       let src = Library.archive lib ~dir ~ext:(Mode.compiled_lib_ext Mode.Byte) in
-      let action_with_targets =
-        List.map Jsoo_rules.Config.all ~f:(fun config ->
-          Jsoo_rules.build_cm
-            sctx
-            ~dir
-            ~in_context:js_of_ocaml
-            ~config:(Some config)
-            ~src:(Path.build src)
-            ~obj_dir)
-      in
-      Memo.parallel_iter action_with_targets ~f:(fun rule ->
-        Super_context.add_rule sctx ~dir ~loc:lib.buildable.loc rule))
+      Jsoo_rules.iter_compilation_targets ~f:(fun ctarget ->
+        let action_with_targets =
+          List.map Jsoo_rules.Config.all ~f:(fun config ->
+            Jsoo_rules.build_cm
+              sctx
+              ~dir
+              ~in_context:js_of_ocaml
+              ~ctarget
+              ~config:(Some config)
+              ~src:(Path.build src)
+              ~obj_dir)
+        in
+        Memo.parallel_iter action_with_targets ~f:(fun rule ->
+          Super_context.add_rule sctx ~dir ~loc:lib.buildable.loc rule)))
   in
   Memo.when_
     (Dynlink_supported.By_the_os.get natdynlink_supported && modes.ocaml.native)

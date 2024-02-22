@@ -233,7 +233,14 @@ let js_of_ocaml_rule
 let jsoo_runtime_files = List.concat_map ~f:(fun t -> Lib_info.jsoo_runtime (Lib.info t))
 let wasm_runtime_files = List.concat_map ~f:(fun t -> Lib_info.wasm_runtime (Lib.info t))
 
-let standalone_runtime_rule cc ~javascript_files ~target ~flags =
+let standalone_runtime_rule
+  ~(ctarget : Js_of_ocaml.Target.t)
+  cc
+  ~javascript_files
+  ~wasm_files
+  ~target
+  ~flags
+  =
   let dir = Compilation_context.dir cc in
   let sctx = Compilation_context.super_context cc in
   let config =
@@ -247,14 +254,18 @@ let standalone_runtime_rule cc ~javascript_files ~target ~flags =
       [ Resolve.Memo.args
           (let open Resolve.Memo.O in
            let+ libs = libs in
-           Command.Args.Deps (jsoo_runtime_files libs))
-      ; Deps (List.map ~f:Path.build javascript_files)
+           Command.Args.Deps
+             ((match ctarget with
+               | JS -> []
+               | Wasm -> wasm_runtime_files libs)
+              @ jsoo_runtime_files libs))
+      ; Deps (List.map ~f:Path.build (wasm_files @ javascript_files))
       ]
   in
   let dir = Compilation_context.dir cc in
   js_of_ocaml_rule
     (Compilation_context.super_context cc)
-    ~ctarget:JS
+    ~ctarget
     ~sub_command:Build_runtime
     ~dir
     ~flags
@@ -287,13 +298,7 @@ let exe_rule
                | JS -> []
                | Wasm -> wasm_runtime_files libs)
               @ jsoo_runtime_files libs))
-      ; Deps
-          (List.map
-             ~f:Path.build
-             ((match ctarget with
-               | JS -> []
-               | Wasm -> wasm_files)
-              @ javascript_files))
+      ; Deps (List.map ~f:Path.build (wasm_files @ javascript_files))
       ; Dep (Path.build src)
       ]
   in
@@ -309,35 +314,58 @@ let exe_rule
     ~config:None
 ;;
 
-let with_js_ext s =
-  match Filename.split_extension s with
-  | name, ".cma" -> name ^ Js_of_ocaml.Ext.cma
-  | name, ".cmo" -> name ^ Js_of_ocaml.Ext.cmo
+let with_js_ext ~(ctarget : Js_of_ocaml.Target.t) s =
+  match Filename.split_extension s, ctarget with
+  | (name, ".cma"), JS -> name ^ Js_of_ocaml.Ext.cma
+  | (name, ".cmo"), JS -> name ^ Js_of_ocaml.Ext.cmo
+  | (name, ".cma"), Wasm -> name ^ Js_of_ocaml.Ext.wasm_cma
+  | (name, ".cmo"), Wasm -> name ^ Js_of_ocaml.Ext.wasm_cmo
   | _ -> assert false
 ;;
 
-let jsoo_archives ctx config lib =
+let jsoo_archives ~ctarget ctx config lib =
   let info = Lib.info lib in
   let archives = Lib_info.archives info in
   match Lib.is_local lib with
   | true ->
     let obj_dir = Lib_info.obj_dir info in
     List.map archives.byte ~f:(fun archive ->
-      in_obj_dir' ~obj_dir ~config:(Some config) [ with_js_ext (Path.basename archive) ])
+      in_obj_dir'
+        ~obj_dir
+        ~config:(Some config)
+        [ with_js_ext ~ctarget (Path.basename archive) ])
   | false ->
     List.map archives.byte ~f:(fun archive ->
       Path.build
         (in_build_dir
            ctx
            ~config
-           [ Lib_name.to_string (Lib.name lib); with_js_ext (Path.basename archive) ]))
+           [ Lib_name.to_string (Lib.name lib)
+           ; with_js_ext ~ctarget (Path.basename archive)
+           ]))
 ;;
 
-let link_rule cc ~runtime ~target ~obj_dir cm ~flags ~linkall ~link_time_code_gen =
+let link_rule
+  ~(ctarget : Js_of_ocaml.Target.t)
+  cc
+  ~runtime
+  ~target
+  ~other_targets
+  ~obj_dir
+  cm
+  ~flags
+  ~linkall
+  ~link_time_code_gen
+  =
   let sctx = Compilation_context.super_context cc in
   let dir = Compilation_context.dir cc in
   let mod_name m =
-    Module_name.Unique.artifact_filename (Module.obj_name m) ~ext:Js_of_ocaml.Ext.cmo
+    Module_name.Unique.artifact_filename
+      (Module.obj_name m)
+      ~ext:
+        (match ctarget with
+         | JS -> Js_of_ocaml.Ext.cmo
+         | Wasm -> Js_of_ocaml.Ext.wasm_cmo)
   in
   let ctx = Super_context.context sctx |> Context.build_context in
   let get_all =
@@ -358,20 +386,40 @@ let link_rule cc ~runtime ~target ~obj_dir cm ~flags ~linkall ~link_time_code_ge
     (* Special case for the stdlib because it is not referenced in the
        META *)
     let stdlib =
-      Path.build (in_build_dir ctx ~config [ "stdlib"; "stdlib" ^ Js_of_ocaml.Ext.cma ])
+      Path.build
+        (in_build_dir
+           ctx
+           ~config
+           [ "stdlib"
+           ; ("stdlib"
+              ^
+              match ctarget with
+              | JS -> Js_of_ocaml.Ext.cma
+              | Wasm -> Js_of_ocaml.Ext.wasm_cma)
+           ])
     in
     let special_units =
       List.concat_map to_link ~f:(function
         | Lib_flags.Lib_and_module.Lib _lib -> []
         | Module (obj_dir, m) -> [ in_obj_dir' ~obj_dir ~config:None [ mod_name m ] ])
     in
-    let all_libs = List.concat_map libs ~f:(jsoo_archives ctx config) in
+    let all_libs = List.concat_map libs ~f:(jsoo_archives ~ctarget ctx config) in
     let all_other_modules =
       List.map cm ~f:(fun m ->
         Path.build (in_obj_dir ~obj_dir ~config:None [ mod_name m ]))
     in
     let std_exit =
-      Path.build (in_build_dir ctx ~config [ "stdlib"; "std_exit" ^ Js_of_ocaml.Ext.cmo ])
+      Path.build
+        (in_build_dir
+           ctx
+           ~config
+           [ "stdlib"
+           ; ("std_exit"
+              ^
+              match ctarget with
+              | JS -> Js_of_ocaml.Ext.cmo
+              | Wasm -> Js_of_ocaml.Ext.wasm_cmo)
+           ])
     in
     let linkall = force_linkall || linkall in
     Command.Args.S
@@ -390,22 +438,22 @@ let link_rule cc ~runtime ~target ~obj_dir cm ~flags ~linkall ~link_time_code_ge
   let spec = Command.Args.S [ Dep (Path.build runtime); Dyn get_all ] in
   js_of_ocaml_rule
     sctx
-    ~ctarget:JS
+    ~ctarget
     ~sub_command:Link
     ~dir
     ~spec
     ~target
-    ~other_targets:[]
+    ~other_targets
     ~flags
     ~config:None
 ;;
 
-let build_cm' sctx ~dir ~in_context ~src ~target ~config =
+let build_cm' sctx ~dir ~in_context ~ctarget ~src ~target ~config =
   let spec = Command.Args.Dep src in
   let flags = in_context.Js_of_ocaml.In_context.flags in
   js_of_ocaml_rule
     sctx
-    ~ctarget:JS
+    ~ctarget
     ~sub_command:Compile
     ~dir
     ~flags
@@ -415,13 +463,16 @@ let build_cm' sctx ~dir ~in_context ~src ~target ~config =
     ~config
 ;;
 
-let build_cm sctx ~dir ~in_context ~src ~obj_dir ~config =
-  let name = with_js_ext (Path.basename src) in
+let iter_compilation_targets ~f = Memo.parallel_iter [ Js_of_ocaml.Target.JS; Wasm ] ~f
+
+let build_cm sctx ~dir ~in_context ~ctarget ~src ~obj_dir ~config =
+  let name = with_js_ext ~ctarget (Path.basename src) in
   let target = in_obj_dir ~obj_dir ~config [ name ] in
   build_cm'
     sctx
     ~dir
     ~in_context
+    ~ctarget
     ~src
     ~target
     ~config:(Option.map config ~f:Action_builder.return)
@@ -455,29 +506,33 @@ let setup_separate_compilation_rules sctx components =
            archive "stdlib.cma" :: archive "std_exit.cmo" :: archives
          | _ -> archives
        in
-       Memo.parallel_iter archives ~f:(fun fn ->
-         let build_context = Context.build_context ctx in
-         let name = Path.basename fn in
-         let dir = in_build_dir build_context ~config [ lib_name ] in
-         let in_context =
-           { Js_of_ocaml.In_context.flags = Js_of_ocaml.Flags.standard
-           ; javascript_files = []
-           ; wasm_files = []
-           }
-         in
-         let src =
-           let src_dir = Lib_info.src_dir info in
-           Path.relative src_dir name
-         in
-         let target = in_build_dir build_context ~config [ lib_name; with_js_ext name ] in
-         build_cm'
-           sctx
-           ~dir
-           ~in_context
-           ~src
-           ~target
-           ~config:(Some (Action_builder.return config))
-         |> Super_context.add_rule sctx ~dir))
+       iter_compilation_targets ~f:(fun ctarget ->
+         Memo.parallel_iter archives ~f:(fun fn ->
+           let build_context = Context.build_context ctx in
+           let name = Path.basename fn in
+           let dir = in_build_dir build_context ~config [ lib_name ] in
+           let in_context =
+             { Js_of_ocaml.In_context.flags = Js_of_ocaml.Flags.standard
+             ; javascript_files = []
+             ; wasm_files = []
+             }
+           in
+           let src =
+             let src_dir = Lib_info.src_dir info in
+             Path.relative src_dir name
+           in
+           let target =
+             in_build_dir build_context ~config [ lib_name; with_js_ext ~ctarget name ]
+           in
+           build_cm'
+             sctx
+             ~dir
+             ~in_context
+             ~ctarget
+             ~src
+             ~target
+             ~config:(Some (Action_builder.return config))
+           |> Super_context.add_rule sctx ~dir)))
 ;;
 
 let js_of_ocaml_compilation_mode t ~dir =
@@ -505,12 +560,6 @@ let build_exe
   let sctx = Compilation_context.super_context cc in
   let dir = Compilation_context.dir cc in
   let { Js_of_ocaml.In_context.javascript_files; wasm_files; flags } = in_context in
-  let standalone_runtime =
-    in_obj_dir
-      ~obj_dir
-      ~config:None
-      [ Path.Build.basename (Path.Build.set_extension src ~ext:Js_of_ocaml.Ext.runtime) ]
-  in
   let mode : Rule.Mode.t =
     match promote with
     | None -> Standard
@@ -525,6 +574,19 @@ let build_exe
     | None -> [ JS ]
   in
   Memo.parallel_iter ctargets ~f:(fun ctarget ->
+    let standalone_runtime =
+      in_obj_dir
+        ~obj_dir
+        ~config:None
+        [ Path.Build.basename
+            (Path.Build.set_extension
+               src
+               ~ext:
+                 (match ctarget with
+                  | JS -> Js_of_ocaml.Ext.runtime
+                  | Wasm -> Js_of_ocaml.Ext.wasm_runtime))
+        ]
+    in
     let target =
       let ext =
         match ctarget with
@@ -536,13 +598,21 @@ let build_exe
     match cmode, ctarget with
     | Separate_compilation, JS ->
       let+ () =
-        standalone_runtime_rule cc ~javascript_files ~target:standalone_runtime ~flags
+        standalone_runtime_rule
+          ~ctarget
+          cc
+          ~javascript_files
+          ~wasm_files:[]
+          ~target:standalone_runtime
+          ~flags
         |> Super_context.add_rule ~loc sctx ~dir
       and+ () =
         link_rule
+          ~ctarget
           cc
           ~runtime:standalone_runtime
           ~target
+          ~other_targets:[]
           ~obj_dir
           top_sorted_modules
           ~flags
@@ -562,7 +632,32 @@ let build_exe
         ~other_targets:[]
         ~flags
       |> Super_context.add_rule sctx ~loc ~dir ~mode
-    | _, Wasm ->
+    | Separate_compilation, Wasm ->
+      let+ () =
+        standalone_runtime_rule
+          ~ctarget
+          cc
+          ~javascript_files
+          ~wasm_files
+          ~target:standalone_runtime
+          ~flags
+        |> Super_context.add_rule ~loc sctx ~dir
+      and+ () =
+        link_rule
+          ~ctarget
+          cc
+          ~runtime:standalone_runtime
+          ~target
+          ~other_targets:[ Path.Build.set_extension src ~ext:Js_of_ocaml.Ext.wasm ]
+          ~obj_dir
+          top_sorted_modules
+          ~flags
+          ~linkall
+          ~link_time_code_gen
+        |> Super_context.add_rule sctx ~loc ~dir ~mode
+      in
+      ()
+    | Whole_program, Wasm ->
       (* We force whole program compilation for now, since separate
          compilation is not yet implemented. *)
       exe_rule

@@ -7,8 +7,11 @@ module Ext : sig
   val wasm_exe : t
   val wasm : t
   val cmo : t
+  val wasm_cmo : t
   val cma : t
+  val wasm_cma : t
   val runtime : t
+  val wasm_runtime : t
 end
 
 module Flags : sig
