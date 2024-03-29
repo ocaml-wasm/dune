@@ -13,6 +13,7 @@ module Ext = struct
   let wasm_cma = ".cma.wasm"
   let runtime = ".bc.runtime.js"
   let wasm_runtime = ".bc.runtime.wasm"
+  let wasm_dir = ".bc.assets"
 end
 
 let field_oslu name = Ordered_set_lang.Unexpanded.field name

@@ -12,6 +12,7 @@ module Ext : sig
   val wasm_cma : t
   val runtime : t
   val wasm_runtime : t
+  val wasm_dir : t
 end
 
 module Flags : sig
