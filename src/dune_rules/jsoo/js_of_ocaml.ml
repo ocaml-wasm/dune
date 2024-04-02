@@ -9,10 +9,10 @@ module Ext = struct
   let wasm = ".bc.wasm"
   let cmo = ".cmo.js"
   let cma = ".cma.js"
-  let wasm_cmo = ".cmo.wasm"
-  let wasm_cma = ".cma.wasm"
+  let wasm_cmo = ".wasmo"
+  let wasm_cma = ".wasma"
   let runtime = ".bc.runtime.js"
-  let wasm_runtime = ".bc.runtime.wasm"
+  let wasm_runtime = ".bc.runtime.wasma"
   let wasm_dir = ".bc.assets"
 end
 
