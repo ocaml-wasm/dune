@@ -178,12 +178,12 @@ module In_buildable = struct
          and+ submodes =
            field_o
              "submodes"
-             (Dune_lang.Syntax.since Stanza.syntax (3, 17) >>> Submode.Set.decode)
+             (Dune_lang.Syntax.since Stanza.syntax (3, 11) >>> Submode.Set.decode)
          and+ javascript_files = field "javascript_files" (repeat string) ~default:[]
          and+ wasm_files =
            field
              "wasm_files"
-             (Dune_lang.Syntax.since Stanza.syntax (3, 17) >>> repeat string)
+             (Dune_lang.Syntax.since Stanza.syntax (3, 11) >>> repeat string)
              ~default:[]
          and+ compilation_mode =
            if executable
@@ -283,7 +283,7 @@ module Env = struct
        and+ submodes =
          field_o
            "submodes"
-           (Dune_lang.Syntax.since Stanza.syntax (3, 17) >>> Submode.Set.decode)
+           (Dune_lang.Syntax.since Stanza.syntax (3, 11) >>> Submode.Set.decode)
        in
        Option.iter ~f:Alias.register_as_standard runtest_alias;
        { compilation_mode; sourcemap; runtest_alias; flags; submodes }
